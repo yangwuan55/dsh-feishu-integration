@@ -1,0 +1,12 @@
+# Default bundle entry for dsh-feishu-integration.
+# Keep inbound takeover disabled by default; enable it only after disabling
+# any other Feishu long-connection plugin in the same DSH profile.
+- insert:
+    - id: dsh-feishu-integration
+      name: dsh-feishu-integration
+      config:
+        title: dsh 回复总结
+        maxText: 1500
+        includeReasons: [completed]
+        takeoverInbound: false
+        replyTimeoutMs: 600000
