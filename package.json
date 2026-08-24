@@ -16,6 +16,9 @@
   "keywords": ["deepseek-harness", "dsh-plugin", "feishu", "lark", "integration", "reply-routing"],
   "engines": { "node": ">=20" },
   "main": "lib/index.js",
+  "scripts": {
+    "test": "node --test"
+  },
   "bin": {
     "fsum-admin": "./bin/fsum-admin.mjs"
   },

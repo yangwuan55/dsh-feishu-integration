@@ -1,4 +1,5 @@
 node_modules/
+.codegraph/
 .DS_Store
 *.log
 .env
