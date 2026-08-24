@@ -114,8 +114,11 @@ $DSH_HOME/integrations/dsh-feishu/bots/<bot-id>/state.json
 3. 插件记录 `message_id → sessionId` 映射；
 4. 用户在飞书中回复该总结；
 5. 插件根据 `parent_id/root_id` 查找映射；
-6. 命中后以 queue 模式把文本注入对应 DSH session；
-7. 最终回答回帖到原飞书线程。
+6. 命中后先立即在原飞书线程回复“已转发到哪个空间、哪个 DSH 会话”，其中包含 workspace 路径、会话标题和 session ID；
+7. 再以 queue 模式把文本注入对应 DSH session；
+8. 最终回答回帖到原飞书线程。
+
+即时回执的 `message_id` 也会写入同一个 `sessionId` 映射，因此用户继续回复这条确认消息时，仍会回到同一个 DSH 会话。
 
 由飞书回复触发的 DSH 回合带有 `fsum-` RPC 标记，不会再次生成总结，从而避免回环。
 
@@ -154,6 +157,8 @@ node --check lib/client.js
 - Provide a DSH settings tab with binding status, QR binding, reconnect, disconnect, and delete actions;
 - Support QR provisioning and the `fsum-admin` CLI;
 - Support both Feishu and Lark domains.
+
+When an inbound message is routed to a mapped DSH session, the plugin immediately replies in the same Feishu thread with the workspace path, session title, and session ID. That acknowledgement message is mapped to the same session, so follow-up replies continue in the same conversation.
 
 ### Safe default
 
