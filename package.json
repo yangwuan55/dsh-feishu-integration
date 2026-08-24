@@ -1,6 +1,6 @@
 {
   "name": "dsh-feishu-integration",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": false,
   "type": "module",
   "description": "飞书与 DeepSeek Harness 双向集成：总结推送、回复路由、绑定 UI 与二维码 provisioning。 / Bidirectional Feishu integration for DeepSeek Harness: summary delivery, reply routing, binding UI, and QR provisioning.",

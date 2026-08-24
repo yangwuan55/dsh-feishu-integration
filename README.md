@@ -137,15 +137,35 @@ node --check lib/client.js
 3. DSH profile 是否已经重启；
 4. `dsh web --dump-config` 是否包含新插件 entry。
 
+## 目录结构
+
+```text
+lib/index.js        组装根：config 解析 + 模块装配（无业务细节）
+lib/host/           host 侧领域模块：bot 存储 / reply-map / 飞书 API /
+                    总结推送 / session 网关 / 单 bot 入站运行时 / 设置页 RPC
+lib/shared/         纯函数与常量（findReplyMapping 等测试缝）
+client-src/         浏览器设置页源码（api / styles / index）
+lib/client.js       由 client-src 构建生成的浏览器 bundle（勿手改）
+scripts/            build-client.mjs：esbuild 打包出 ModuleLoader 包装产物
+test/               node:test 回归（路由映射 / 回执文案 / 入站顺序）
+```
+
+约束：一个 bot 只允许一个飞书长连接（集群模式多 client 会随机分流事件）；
+`parent_id/root_id → reply-map → DSH session` 的路由语义与 `fsum-` 防回环前缀不可变。
+
 ## 开发
 
 ```bash
 git clone https://github.com/yangwuan55/dsh-feishu-integration.git
 cd dsh-feishu-integration
 pnpm install
+pnpm build          # client-src/ → lib/client.js（改前端源码后必须重建）
+pnpm test           # node:test 全量回归
 node --check lib/index.js
-node --check lib/client.js
 ```
+
+改 host 侧逻辑直接编辑 `lib/host/*.js`，无需构建；改设置页 UI 编辑 `client-src/`，
+然后 `pnpm build` 重新生成 `lib/client.js`。发布包只含 `lib/`、`bin/` 与文档。
 
 ## English
 
@@ -159,6 +179,10 @@ node --check lib/client.js
 - Support both Feishu and Lark domains.
 
 When an inbound message is routed to a mapped DSH session, the plugin immediately replies in the same Feishu thread with the workspace path, session title, and session ID. That acknowledgement message is mapped to the same session, so follow-up replies continue in the same conversation.
+
+### Development
+
+Host-side modules live in `lib/host/` and `lib/shared/` (plain ESM, no build step). The settings UI source lives in `client-src/` and is bundled into `lib/client.js` with esbuild — run `pnpm build` after editing it. `pnpm test` runs the regression suite (route mapping, acknowledgement copy, inbound ordering with a fake Lark SDK).
 
 ### Safe default
 
