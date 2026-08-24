@@ -1,0 +1,5 @@
+allowBuilds:
+  # esbuild 的 postinstall 只是二进制下载回退；平台二进制经 optionalDependencies 提供，无需执行脚本。
+  esbuild: false
+  # protobufjs 为 @larksuiteoapi/node-sdk 传递依赖；纯 JS 回退已验证可用（长连接运行正常）。
+  protobufjs: false

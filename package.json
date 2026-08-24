@@ -13,10 +13,20 @@
   "bugs": {
     "url": "https://github.com/yangwuan55/dsh-feishu-integration/issues"
   },
-  "keywords": ["deepseek-harness", "dsh-plugin", "feishu", "lark", "integration", "reply-routing"],
-  "engines": { "node": ">=20" },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "feishu",
+    "lark",
+    "integration",
+    "reply-routing"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "main": "lib/index.js",
   "scripts": {
+    "build": "node scripts/build-client.mjs",
     "test": "node --test"
   },
   "bin": {
@@ -42,9 +52,18 @@
       ]
     }
   },
-  "files": ["lib", "bin", "README.md", "LICENSE", "cordis.patch.yml"],
+  "files": [
+    "lib",
+    "bin",
+    "README.md",
+    "LICENSE",
+    "cordis.patch.yml"
+  ],
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.73.0",
     "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }
