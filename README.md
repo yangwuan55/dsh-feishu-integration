@@ -120,6 +120,8 @@ $DSH_HOME/integrations/dsh-feishu/bots/<bot-id>/state.json
 
 即时回执的 `message_id` 也会写入同一个 `sessionId` 映射，因此用户继续回复这条确认消息时，仍会回到同一个 DSH 会话。
 
+等待回答超时（默认 600s）时插件保持静默：不追发「处理失败」回帖、不追加错误表情——转发回执本身已被视为送达确认，超时仅记录在 host 日志中。其他真实错误仍会回帖提示。
+
 由飞书回复触发的 DSH 回合带有 `fsum-` RPC 标记，不会再次生成总结，从而避免回环。
 
 ## 验证
@@ -179,6 +181,8 @@ node --check lib/index.js
 - Support both Feishu and Lark domains.
 
 When an inbound message is routed to a mapped DSH session, the plugin immediately replies in the same Feishu thread with the workspace path, session title, and session ID. That acknowledgement message is mapped to the same session, so follow-up replies continue in the same conversation.
+
+If the answer does not arrive before the timeout (600s by default), the plugin stays silent in Feishu — no failure message, no error reaction. The routing acknowledgement already served as the delivery receipt; timeouts are only logged host-side. Genuine errors still get a failure reply.
 
 ### Development
 

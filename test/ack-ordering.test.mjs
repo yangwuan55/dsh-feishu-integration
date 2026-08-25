@@ -252,3 +252,49 @@ test('acknowledgement failure does not block reaction or prompt flow', async () 
 
   await closeServer(server)
 })
+
+test('ask timeout stays silent in Feishu — the routing ack already served as the reply', async () => {
+  const log = []
+  const state = { prompted: false, promptRpcId: null, promptText: null, historyEvents: [] }
+  const larkSdk = makeFakeLarkWithCapture(log)
+
+  // 历史永远不产生 turn/end → ask() 必然超时
+  const server = makeRpcServer(state)
+  await listen(server.listen(0, '127.0.0.1'))
+  const origin = `http://127.0.0.1:${server.address().port}`
+
+  await startInboundForBot({
+    origin,
+    workspace: '/tmp/proj-w',
+    agentPreset: 'standard',
+    replyTimeoutMs: 600,
+    replyMaxChars: 9000,
+    bot: BOT,
+    appSecret: 's3cret',
+    record: null,
+    larkSdk,
+    helpers: makeHelpers([]),
+  })
+
+  const dispatcher = larkSdk.__dispatchers[0]
+  dispatcher['im.message.receive_v1'](makeEvent('帮我看看'))
+
+  await until(() => state.prompted, 'prompt issued')
+  // 等待 ask() 轮询超时并走完 handle() 的 catch（600ms 超时 + 轮询间隔余量）
+  await new Promise((r) => setTimeout(r, 1800))
+
+  // 飞书侧只有一条回帖：路由回执本身；没有任何失败反馈
+  const replies = log.filter((e) => e?.op === 'reply')
+  assert.equal(replies.length, 1, 'only the routing acknowledgement is posted')
+  assert.match(replies[0].text, /已转发到对应 DSH 会话/)
+  assert.ok(
+    !log.some((e) => e?.op === 'reaction' && e.emoji === 'ERROR'),
+    'no ERROR reaction on timeout',
+  )
+  assert.ok(
+    log.some((e) => e?.op === 'reaction' && e.emoji === 'OnIt'),
+    'OnIt reaction kept as-is',
+  )
+
+  await closeServer(server)
+})
