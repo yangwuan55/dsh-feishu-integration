@@ -5,6 +5,7 @@ import {
   FEISHU_ENDPOINTS,
   unwrapRpcResult,
   normalizeProvisioning,
+  normalizePollResult,
   normalizeBotsSnapshot,
   presentError,
   formatRemaining,
