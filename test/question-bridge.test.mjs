@@ -192,14 +192,67 @@ test('GUI-first race: accepted=false yields info note and consumes the pending e
   await until(() => posts.length === 1, 'relayed post')
   assert.equal(bridge.__pendingCount(), 1)
 
-  // 网页端先答了：respond 返回 accepted=false
-  bridge.__setRespondForTest(async () => ({ accepted: false, reason: 'not-pending' }))
+  // 网页端先答了：respond 返回 accepted=false（首次即失败，非重试）
+  bridge.__setRespondForTest(async () => ({ receipt: { accepted: false, reason: 'not-pending' }, retried: false }))
 
   const consumed = await bridge.interceptReply({
     parentMessageId: 'qmsg_' + posts.length, rootMessageId: null, messageId: 'u5', text: '1',
   })
   assert.equal(consumed, true)
   assert.ok(posts.some((p) => p.text.includes('已在 DSH 网页端处理')))
+  assert.equal(bridge.__pendingCount(), 0)
+
+  bridge.close()
+})
+
+test('root-key hit clears pending under BOTH keys (no stale re-answer mislabel)', async () => {
+  const mux = makeFakeMux()
+  const posts = []
+  const { bridge } = makeBridge(mux, posts)
+
+  mux.state.sockets[0].deliver('rq_6', {
+    type: 'question/requested', sessionId: 'session-fixed', questions: [QUESTION],
+  })
+  await until(() => posts.length === 1, 'relayed post')
+
+  // 用户在提问线程里先回了另一条消息（parent=其他消息、root=提问消息）
+  const first = await bridge.interceptReply({
+    parentMessageId: 'other_msg', rootMessageId: 'qmsg_1', messageId: 'u6a', text: '2',
+  })
+  assert.equal(first, true)
+  assert.equal(mux.state.responds.length, 1)
+  assert.equal(bridge.__pendingCount(), 0, 'root 键命中也必须清干净')
+
+  // 再直接回复提问消息：不应再次提交（否则误报「已在网页端处理」）
+  const second = await bridge.interceptReply({
+    parentMessageId: 'qmsg_1', rootMessageId: null, messageId: 'u6b', text: '1',
+  })
+  assert.equal(second, false)
+  assert.equal(mux.state.responds.length, 1)
+
+  bridge.close()
+})
+
+test('retry-after-error yielding not-pending is treated as fuzzy success, not GUI race', async () => {
+  const mux = makeFakeMux()
+  const posts = []
+  const { bridge } = makeBridge(mux, posts)
+
+  mux.state.sockets[0].deliver('rq_7', {
+    type: 'question/requested', sessionId: 'session-fixed', questions: [QUESTION],
+  })
+  await until(() => posts.length === 1, 'relayed post')
+
+  // 首次 POST 网络超时（服务端其实已受理），mux-client 重试后拿到 not-pending
+  // ——桥收到的就是 {receipt:{accepted:false}, retried:true} 这一归一化形状
+  bridge.__setRespondForTest(async () => ({ receipt: { accepted: false, reason: 'not-pending' }, retried: true }))
+
+  const consumed = await bridge.interceptReply({
+    parentMessageId: 'qmsg_' + posts.length, rootMessageId: null, messageId: 'u7', text: '1',
+  })
+  assert.equal(consumed, true)
+  assert.ok(posts.some((p) => p.text.includes('回答已提交')), '应按成功口径确认而非误导')
+  assert.ok(!posts.some((p) => p.text.includes('已在 DSH 网页端处理')))
   assert.equal(bridge.__pendingCount(), 0)
 
   bridge.close()

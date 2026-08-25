@@ -64,3 +64,32 @@ test('provision.begin surfaces the real registerApp failure instead of generic i
   assert.match(res.error.message, /Provisioning failed: getaddrinfo ENOTFOUND feishu/)
   assert.notEqual(res.error.code, 'internal')
 })
+
+test('a second begin cancels the still-active first attempt (no latestAttemptId crosstalk)', async () => {
+  const { ctx, invoke } = makeCtx()
+  const signals = []
+  const deps = {
+    ...EMPTY_DEPS,
+    registerAppFn(options) {
+      signals.push(options.signal)
+      // 第一次：QR 迟迟不出（10s）；第二次：50ms 后出
+      const delay = signals.length === 1 ? 10000 : 50
+      const timer = setTimeout(() => options.onQRCodeReady({ url: 'https://qr/' + signals.length, expireIn: 600 }), delay)
+      options.signal.addEventListener('abort', () => clearTimeout(timer))
+      return new Promise(() => {})
+    },
+  }
+  installConnectionRpc(ctx, deps)
+
+  const firstPromise = invoke(FEISHU_ENDPOINTS.beginProvisioning, {}) // 不 await，制造并发窗口
+  await new Promise((r) => setTimeout(r, 30))
+  const second = await invoke(FEISHU_ENDPOINTS.beginProvisioning, {})
+
+  assert.equal(second.ok, true)
+  assert.ok(signals[0].aborted, '旧尝试必须被取消')
+  // 旧 attemptId 的轮询应显示失败（cancelled → failed），而非继续 pending 串台
+  const oldPoll = await invoke(FEISHU_ENDPOINTS.pollProvisioning, { attemptId: String(second.value.attemptId - 1) })
+  assert.equal(oldPoll.ok, true)
+  assert.equal(oldPoll.value.status, 'failed')
+  await firstPromise.catch(() => undefined)
+})
