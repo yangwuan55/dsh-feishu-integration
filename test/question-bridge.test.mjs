@@ -1,7 +1,7 @@
 /**
  * 提问桥集成测试：注入式假 WebSocket + 桩 postToSession，
  * 验证 question/requested 转发、飞书回复作答提交 /api/respond（桩）、
- * 重放去重、多问题降级与结算清算。
+ * 重放去重、逐题串行作答、整批取消与结算清算。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -105,7 +105,8 @@ test('question/requested relays to session thread and reply submits answer', asy
   })
 
   // ③ 确认回执发到用户消息线程；pending 已清；再次拦截不命中
-  assert.match(posts[1].text, /✅ 已把你的回答提交给会话：裸机/)
+  assert.match(posts[1].text, /✅ 已把全部回答提交给会话：/)
+  assert.match(posts[1].text, /用哪种方式部署？ → 裸机/)
   assert.equal(posts[1].parentMessageId, 'user_reply_1')
   assert.equal(bridge.__pendingCount(), 0)
   const again = await bridge.interceptReply({
@@ -157,7 +158,7 @@ test('replayed frames dedupe by rpcId; resolved cleans up and notifies non-us an
   bridge.close()
 })
 
-test('multi-question batch degrades to notify-only without answer registration', async () => {
+test('multi-question batch runs as sequential rounds then submits once', async () => {
   const mux = makeFakeMux()
   const posts = []
   const { bridge } = makeBridge(mux, posts)
@@ -165,19 +166,76 @@ test('multi-question batch degrades to notify-only without answer registration',
   mux.state.sockets[0].deliver('rq_4', {
     type: 'question/requested',
     sessionId: 'session-fixed',
-    questions: [QUESTION, { ...QUESTION, id: 'qq2' }],
+    questions: [QUESTION, { ...QUESTION, id: 'qq2', header: '域名' }],
   })
-  await until(() => posts.length === 1, 'degraded notice')
-  assert.match(posts[0].text, /暂不支持在飞书作答/)
-  assert.equal(posts[0].parentMessageId, null) // 不选线程
+  await until(() => posts.length === 1, 'first round post')
+  assert.match(posts[0].text, /共 2 个问题，将逐题询问/)
+  assert.match(posts[0].text, /【第 1\/2 题】/)
+  assert.match(posts[0].text, /1\. Docker/)
+  assert.equal(bridge.__pendingCount(), 1)
+
+  // 回答第 1 题 → 不提交，先发第 2 题
+  const c1 = await bridge.interceptReply({
+    parentMessageId: 'qmsg_1', rootMessageId: null, messageId: 'u4a', text: '2',
+  })
+  assert.equal(c1, true)
+  assert.equal(mux.state.responds.length, 0)
+  await until(() => posts.length === 2, 'second round post')
+  assert.match(posts[1].text, /【第 2\/2 题】/)
+  assert.equal(bridge.__pendingCount(), 2) // 两轮消息都登记，回复任一条均可继续
+
+  // 回答第 2 题（自定义）→ 整批一次提交，answers 按题序
+  const c2 = await bridge.interceptReply({
+    parentMessageId: 'qmsg_2', rootMessageId: null, messageId: 'u4b', text: 'a.example.com',
+  })
+  assert.equal(c2, true)
+  assert.equal(mux.state.responds.length, 1)
+  assert.deepEqual(mux.state.responds[0], {
+    rpcId: 'rq_4',
+    result: {
+      ok: true,
+      value: {
+        sessionId: 'session-fixed',
+        answer: {
+          answers: [
+            { id: 'qq1', selected: ['裸机'] },
+            { id: 'qq2', selected: [], custom: 'a.example.com' },
+          ],
+        },
+      },
+    },
+  })
+  await until(() => posts.some((p) => p.text.includes('已把全部回答提交给会话')), 'batch confirmation')
+  assert.ok(posts.some((p) => /用哪种方式部署？ → 裸机/.test(p.text)))
   assert.equal(bridge.__pendingCount(), 0)
 
-  // 未登记 → 拦截不命中
-  const hit = await bridge.interceptReply({
-    parentMessageId: 'qmsg_1', rootMessageId: null, messageId: 'u1', text: '1',
+  bridge.close()
+})
+
+test('「取消」aborts the whole batch with a cancelled respond', async () => {
+  const mux = makeFakeMux()
+  const posts = []
+  const { bridge } = makeBridge(mux, posts)
+
+  mux.state.sockets[0].deliver('rq_8', {
+    type: 'question/requested',
+    sessionId: 'session-fixed',
+    questions: [QUESTION, { ...QUESTION, id: 'qq2' }],
   })
-  assert.equal(hit, false)
-  assert.equal(mux.state.responds.length, 0)
+  await until(() => posts.length === 1, 'first round')
+  await bridge.interceptReply({ parentMessageId: 'qmsg_1', rootMessageId: null, messageId: 'u8a', text: '1' })
+  await until(() => posts.length === 2, 'second round')
+
+  const consumed = await bridge.interceptReply({
+    parentMessageId: 'qmsg_2', rootMessageId: null, messageId: 'u8b', text: '取消',
+  })
+  assert.equal(consumed, true)
+  assert.equal(mux.state.responds.length, 1)
+  assert.equal(mux.state.responds[0].result.ok, false)
+  assert.equal(mux.state.responds[0].result.error.code, 'cancelled')
+  assert.ok(posts.some((p) => p.text.includes('已取消这批提问')))
+  assert.equal(bridge.__pendingCount(), 0)
+
   bridge.close()
 })
 
