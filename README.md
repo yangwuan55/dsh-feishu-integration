@@ -124,6 +124,18 @@ $DSH_HOME/integrations/dsh-feishu/bots/<bot-id>/state.json
 
 由飞书回复触发的 DSH 回合带有 `fsum-` RPC 标记，不会再次生成总结，从而避免回环。
 
+## 会话提问转接（answerFromFeishu）
+
+DSH 会话执行中调用 `ask_user_question` 暂停等待用户回答时，回合不会结束，飞书侧原本收不到任何通知。`takeoverInbound=true` 且 `answerFromFeishu=true`（默认）时，提问桥打通双向链路：
+
+1. 插件经本机 WebSocket（`/api/events.mux` 下行流）收到 `question/requested`；
+2. 问题与选项格式化后发到该会话最近使用过的飞书线程（无历史线程则落到总结目的地）；多问题批次仅提示去网页端回答；
+3. 用户在飞书回帖：数字选选项（multiSelect 可「1、3」组合）、选项原文精确匹配、其余文本作为自定义回答；
+4. 插件组装结构化作答 POST `/api/respond`，成功后在原帖回「✅ 已提交回答」，会话继续执行；
+5. 网页端抢先作答时插件收到 `accepted:false`，静默补一条说明；问题被取消同理。
+
+断线自动重连（1s→30s 退避），重放帧按 rpcId 去重不会重复发帖。该通道为纯下行 WebSocket + HTTP 上行，不占用也不影响飞书长连接数量约束。
+
 ## 验证
 
 ```bash
@@ -183,6 +195,16 @@ node --check lib/index.js
 When an inbound message is routed to a mapped DSH session, the plugin immediately replies in the same Feishu thread with the workspace path, session title, and session ID. That acknowledgement message is mapped to the same session, so follow-up replies continue in the same conversation.
 
 If the answer does not arrive before the timeout (600s by default), the plugin stays silent in Feishu — no failure message, no error reaction. The routing acknowledgement already served as the delivery receipt; timeouts are only logged host-side. Genuine errors still get a failure reply.
+
+### Session question relay (`answerFromFeishu`)
+
+When a DSH session pauses on `ask_user_question`, the turn never ends, so Feishu used to hear nothing. With `takeoverInbound: true` and `answerFromFeishu: true` (default), a question bridge closes that loop:
+
+1. The plugin receives `question/requested` frames over a local WebSocket downlink (`/api/events.mux`);
+2. The question and options are posted to the most recent Feishu thread of that session (or the summary destination when none exists); multi-question batches degrade to a "answer in DSH" notice;
+3. A thread reply is parsed as: option numbers (multiSelect allows "1、3"), an exact option label, or free text as a custom answer;
+4. The plugin submits the structured answer via `POST /api/respond` and confirms in-thread; if the web UI answered first (`accepted:false`) it posts a short note instead;
+5. Reconnects replay pending frames — dedupe by rpcId prevents duplicate posts.
 
 ### Development
 
