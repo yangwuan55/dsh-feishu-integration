@@ -65,8 +65,15 @@ function makeBridge(mux, posts, log = () => {}) {
     openSocket: mux.openSocket,
     latestThreadLookup: (sessionId) => (sessionId === 'session-fixed' ? 'thread_root_1' : null),
     recordReplyMapping: (messageId, meta) => mappings.push({ messageId, meta }),
-    postToSession: async (text, sessionId, parentMessageId) => {
+    postToSession: async (text, sessionId, parentMessageId, meta = {}) => {
+      // 真·异步：模拟网络往返，确保断言观察到的是登记完成后的状态
+      await new Promise((r) => setImmediate(r))
       posts.push({ text, sessionId, parentMessageId })
+      // 模拟飞书响应：回帖到 thread_root_1 时服务端返回线程信息
+      if (parentMessageId === 'thread_root_1') {
+        meta.rootId = 'thread_root_1'
+        meta.parentId = 'thread_root_1'
+      }
       return { messageId: 'qmsg_' + posts.length }
     },
   })
@@ -144,10 +151,11 @@ test('replayed frames dedupe by rpcId; resolved cleans up and notifies non-us an
   mux.state.sockets[0].deliver('rq_3', {
     type: 'question/requested', sessionId: 'session-fixed', questions: [QUESTION],
   })
-  await until(() => posts.length >= 2, 'second question post')
+  await until(() => posts.filter((p) => p.text.includes('部署')).length === 2, 'rq3 question post')
+  const targetIdx = posts.map((p) => p.text.includes('部署')).lastIndexOf(true)
   const before = posts.length
   await bridge.interceptReply({
-    parentMessageId: 'qmsg_' + before, rootMessageId: null, messageId: 'u3', text: '1',
+    parentMessageId: 'qmsg_' + (targetIdx + 1), rootMessageId: null, messageId: 'u3', text: '1',
   })
   mux.state.sockets[0].deliver('srv_y', {
     type: 'question/resolved', sessionId: 'session-fixed', questionRpcId: 'rq_3', outcome: 'answered',
@@ -182,7 +190,7 @@ test('multi-question batch runs as sequential rounds then submits once', async (
   assert.equal(mux.state.responds.length, 0)
   await until(() => posts.length === 2, 'second round post')
   assert.match(posts[1].text, /【第 2\/2 题】/)
-  assert.equal(bridge.__pendingCount(), 2) // 两轮消息都登记，回复任一条均可继续
+  assert.equal(bridge.__pendingCount(), 1) // 计数按批次：两轮消息同属一个活跃批次
 
   // 回答第 2 题（自定义）→ 整批一次提交，answers 按题序
   const c2 = await bridge.interceptReply({
@@ -312,6 +320,36 @@ test('retry-after-error yielding not-pending is treated as fuzzy success, not GU
   assert.ok(posts.some((p) => p.text.includes('回答已提交')), '应按成功口径确认而非误导')
   assert.ok(!posts.some((p) => p.text.includes('已在 DSH 网页端处理')))
   assert.equal(bridge.__pendingCount(), 0)
+
+  bridge.close()
+})
+
+test('reply keyed by THREAD ROOT (not question msg) still hits the batch — field bug regression', async () => {
+  const mux = makeFakeMux()
+  const posts = []
+  const { bridge } = makeBridge(mux, posts)
+
+  mux.state.sockets[0].deliver('rq_9', {
+    type: 'question/requested', sessionId: 'session-fixed', questions: [QUESTION],
+  })
+  await until(() => posts.length === 1, 'relayed post')
+
+  // 现场语义：用户在话题线程里回帖，事件带的是线程根（thread_root_1），
+  // 而不是提问消息 id（qmsg_1）。多键登记后必须命中。
+  const consumed = await bridge.interceptReply({
+    parentMessageId: 'thread_root_1', rootMessageId: 'thread_root_1',
+    messageId: 'u9', text: '2',
+  })
+  assert.equal(consumed, true, '线程根键必须命中挂起批次')
+  assert.equal(mux.state.responds.length, 1)
+  assert.equal(bridge.__pendingCount(), 0)
+
+  // 清理必须覆盖全部别名键：同键再回复不得二次命中
+  const again = await bridge.interceptReply({
+    parentMessageId: 'qmsg_1', rootMessageId: null, messageId: 'u9b', text: '1',
+  })
+  assert.equal(again, false)
+  assert.equal(mux.state.responds.length, 1)
 
   bridge.close()
 })
