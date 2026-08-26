@@ -353,3 +353,43 @@ test('reply keyed by THREAD ROOT (not question msg) still hits the batch — fie
 
   bridge.close()
 })
+
+test('bad-response receipt = plugin payload bug: rollback + explicit warning, never GUI-race note', async () => {
+  const mux = makeFakeMux()
+  const posts = []
+  let submitted = null
+  const { bridge } = makeBridge(mux, posts)
+
+  mux.state.sockets[0].deliver('rq_10', {
+    type: 'question/requested', sessionId: 'session-fixed', questions: [QUESTION],
+  })
+  await until(() => posts.length === 1, 'relayed post')
+
+  bridge.__setRespondForTest(async () => ({
+    receipt: { accepted: false, reason: 'bad-response' },
+    retried: false,
+  }))
+
+  const consumed = await bridge.interceptReply({
+    parentMessageId: 'qmsg_1', rootMessageId: null, messageId: 'u10', text: '1',
+  })
+  assert.equal(consumed, true)
+  assert.ok(!posts.some((p) => p.text.includes('已在 DSH 网页端处理')), '协议错误绝不能伪装成抢答')
+  assert.ok(posts.some((p) => p.text.includes('提交被拒绝')))
+  // 回滚后批次仍活着：重答同一题可再次触发提交
+  assert.equal(bridge.__pendingCount(), 1)
+
+  bridge.__setRespondForTest(async (msg) => {
+    submitted = msg
+    return { receipt: { accepted: true }, retried: false }
+  })
+  const retry = await bridge.interceptReply({
+    parentMessageId: 'thread_root_1', rootMessageId: null, messageId: 'u10b', text: '2',
+  })
+  assert.equal(retry, true)
+  assert.equal(submitted?.rpcId, 'rq_10')
+  assert.equal(submitted?.result?.ok, true)
+  assert.equal(bridge.__pendingCount(), 0)
+
+  bridge.close()
+})
